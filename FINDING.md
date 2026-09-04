@@ -92,6 +92,41 @@ architecture is held fixed and only the factorisation changes.
 ConvFSENet could not be instantiated standalone (`ValueError: unsupported norm_type for the
 standalone: cLN`) and is still owed as the third architecture.
 
+### That hypothesis has now been tested too, and it fails
+
+Within-family sweep over the public eco8 NSNet2 checkpoints — architecture, training recipe,
+dataset, STFT grid and oracle all held fixed by construction; only width changes
+(`diagnostics/gain_rank_family_sweep.py`):
+
+| variant | params | r90 | r99 |
+| --- | ---: | ---: | ---: |
+| `dense_h52` | 77,087 | 2.0 | 4.3 |
+| `dense_h68` | 117,863 | 2.0 | 3.8 |
+| `dense_h100` | 223,607 | 2.0 | 4.3 |
+| `dense_h148` | 442,703 | 2.0 | 3.2 |
+| `dense_h216` | 877,325 | 2.0 | 5.7 |
+| `baseline` | 2,783,657 | 2.0 | 4.7 |
+
+`r90` is **constant at 2.0 across a 36× range of parameter count**. Spearman(params, r90) is
+undefined because the statistic does not vary; `r99` gives +0.493, the opposite sign to the
+prediction and not significant at n=6. **Gain-surface rank does not track parameter
+redundancy.** The hypothesis is withdrawn.
+
+Two limits on how much this result can bear:
+
+* **The factorisation arm is missing.** The six `blockdiag_*` and `monarch_*` checkpoints — the
+  axis that maps most directly onto redundancy — failed to load (`ImportError:
+  torch_structured.monarch.BlockdiagLinear`; the installable `torch_structured` does not expose
+  that name). Only the width ladder was tested, and width is a weaker proxy for redundancy
+  than factorisation.
+* **`r90 = 2.0` exactly, six times over, is itself a warning.** A statistic pinned at the same
+  integer for every member of a family is more likely at a floor than measuring something. It
+  should not be read as "these models all have rank-2 gain surfaces" without first establishing
+  that `r90` can move at all on this family — e.g. by checking that it responds to SNR, noise
+  type and utterance within a single checkpoint.
+
+This is the third successive hypothesis in this branch to die at its first proper control.
+
 ## What is still owed
 
 * **Cross-architecture replication** on LiSenNet and ConvFSENet. This is a requirement, not a
