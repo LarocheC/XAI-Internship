@@ -59,12 +59,38 @@ result is not "any smooth gain works".
 the compressibility. Quality saturates at rank 16–32, which matches `r99 = 18.3`. **`r99` is the
 statistic to quote**; `r90` is not perceptually calibrated.
 
-## The claim
+## The claim — NARROWED after cross-architecture replication
 
-*A trained mask-based speech enhancer produces a gain surface roughly five times
-lower-dimensional than the ideal ratio mask it was trained to approximate (r99 ≈ 18 vs ≈ 87);
-truncating to the model's own effective rank costs ≈ 0.2 dB, while a random subspace of the same
-rank destroys the output.*
+The class-level claim first written here ("a trained mask-based enhancer produces a gain surface
+roughly five times lower-dimensional than the ideal ratio mask it was trained to approximate")
+is **false**. Replicating on LiSenNet with the oracle computed in its own gain domain:
+
+| system | params | r90 | r99 | own IRM r90 | own IRM r99 | random null r90 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| NSNet2 | 2,783,657 | **4.7** | 18.3 | 22.2 | 86.7 | 109.7 |
+| LiSenNet `conv-hardened` | 36,288 | **41.3** | 127.2 | 22.2 | 112.5 | 109.2 |
+
+LiSenNet's gain surface is **higher**-dimensional than its own oracle target — the reverse of
+NSNet2, and nearly an order of magnitude above it. Whatever NSNet2 is doing, it is not a
+property of mask-based enhancement.
+
+What survives is the *variation*, which is a weaker but real observation:
+
+*The effective rank of a trained enhancer's gain surface varies by nearly an order of magnitude
+across architectures (r90 4.7 to 41.3) and is not predicted by the oracle target, which is
+nearly identical for both (r90 22.2). For NSNet2 the surface is far below its target and
+rank-16 truncation is perceptually free; a random subspace at matched rank destroys the output.*
+
+**The interesting direction this opens.** The two models sit at opposite ends of both rank
+*and* redundancy: NSNet2 has 77× more parameters, a rank-4.7 output, and compresses 24× at no
+PESQ cost (2.837 vs 2.845 for `monarch_40` at 117k); LiSenNet is already tiny, has a rank-41
+output, and has no comparable headroom. n=2 is an anecdote, not evidence — but the hypothesis
+*gain-surface rank tracks parameter redundancy* is now testable with a **validated** statistic
+across the 27 public `sparse-nsnet2-checkpoints` variants within a single family, where the
+architecture is held fixed and only the factorisation changes.
+
+ConvFSENet could not be instantiated standalone (`ValueError: unsupported norm_type for the
+standalone: cLN`) and is still owed as the third architecture.
 
 ## What is still owed
 
