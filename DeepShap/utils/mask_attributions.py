@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 from captum.attr import (
     DeepLift,
+    DeepLiftShap,
     GradientShap,
     InputXGradient,
     IntegratedGradients,
@@ -47,7 +48,7 @@ class RegionMaskLogit(nn.Module):
         return region.mean(dim=(1, 2), keepdim=False).unsqueeze(1)
 
 
-def noise_floor_baselines(log_power, model, n_baselines=16, jitter_db=3.0, seed=0):
+def noise_floor_baselines(log_power, n_baselines=16, jitter_db=3.0, seed=0):
     """A baseline *distribution*, as DeepLiftShap and GradientShap expect.
 
     The original code passed ten identical copies of one tensor, a zero-variance
@@ -85,14 +86,19 @@ def attribute_region(model, log_power, f_slice, t_slice, method="deeplift",
         return InputXGradient(target_fn).attribute(inputs, target=0)[0].detach().cpu().numpy(), None
 
     if baselines is None:
-        baselines = noise_floor_baselines(log_power, model, seed=seed)
+        baselines = noise_floor_baselines(log_power, seed=seed)
 
-    if method == "deeplift":
+    if method == "deeplift_shap":
+        # The whole point of the baseline distribution: DeepLiftShap averages over it.
+        attr, delta = DeepLiftShap(target_fn).attribute(
+            inputs, baselines=baselines, target=0, return_convergence_delta=True)
+    elif method == "deeplift":
         attr, delta = DeepLift(target_fn).attribute(
-            inputs, baselines=baselines[:1], target=0, return_convergence_delta=True)
+            inputs, baselines=baselines.mean(dim=0, keepdim=True), target=0,
+            return_convergence_delta=True)
     elif method == "integrated_gradients":
         attr, delta = IntegratedGradients(target_fn).attribute(
-            inputs, baselines=baselines[:1], target=0, n_steps=n_steps,
+            inputs, baselines=baselines.mean(dim=0, keepdim=True), target=0, n_steps=n_steps,
             return_convergence_delta=True)
     elif method == "gradient_shap":
         attr, delta = GradientShap(target_fn).attribute(
@@ -122,6 +128,21 @@ def occlusion_reference(model, log_power, f_slice, t_slice, patch=(8, 4), fill=N
                 occluded[0, f:f + patch[0], t:t + patch[1]] = fill
                 out[f:f + patch[0], t:t + patch[1]] = reference - float(target_fn(occluded))
     return out
+
+
+def control_maps(log_power, seed=0):
+    """The two controls every attribution table needs.
+
+    ``random`` fixes the null at exactly 1.0 enrichment by construction. ``energy`` ranks
+    bins by their own log-power -- the audio analogue of Adebayo's edge detector, and a
+    surprisingly strong baseline that any useful method must beat.
+    """
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    shape = tuple(log_power.shape[1:])
+    return {
+        "random": torch.rand(shape, generator=generator).numpy(),
+        "energy_detector": log_power[0].detach().cpu().numpy() - float(log_power.min()),
+    }
 
 
 def localisation_scores(attribution, ground_truth_mask):

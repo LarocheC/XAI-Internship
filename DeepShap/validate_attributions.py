@@ -32,13 +32,15 @@ from scipy.stats import spearmanr
 from config.parameters import n_fft, sample_rate
 from utils.mask_attributions import (
     attribute_region,
+    control_maps,
     localisation_scores,
     noise_floor_baselines,
     occlusion_reference,
 )
 from utils.model_utils import load_nsnet2_model
 
-METHODS = ["deeplift", "integrated_gradients", "gradient_shap", "input_x_gradient", "saliency"]
+METHODS = ["deeplift_shap", "deeplift", "integrated_gradients", "gradient_shap",
+           "input_x_gradient", "saliency"]
 
 
 def read_wav(path, target_sr=sample_rate, max_seconds=3.0):
@@ -71,8 +73,10 @@ def synthetic_speech(seconds=3.0):
     return audio.unsqueeze(0)
 
 
-def inject_burst(clean, centre_hz=3000.0, bandwidth_hz=300.0, t0=1.0, t1=1.6, level=0.25, seed=0):
-    """Add a narrowband noise burst; return the noisy signal and its TF support."""
+def inject_burst(clean, centre_hz=3000.0, bandwidth_hz=300.0, t0=1.0, t1=1.6, snr_db=0.0, seed=0):
+    """Add a narrowband noise burst at a stated SNR (dB) relative to the clean signal
+    over the burst interval, so burst strength is a sweepable axis rather than an opaque
+    amplitude ratio."""
     generator = torch.Generator().manual_seed(seed)
     n = clean.shape[-1]
     noise = torch.randn(1, n, generator=generator)
@@ -81,14 +85,20 @@ def inject_burst(clean, centre_hz=3000.0, bandwidth_hz=300.0, t0=1.0, t1=1.6, le
     spectrum[:, (freqs < centre_hz - bandwidth_hz / 2) | (freqs > centre_hz + bandwidth_hz / 2)] = 0
     band = torch.fft.irfft(spectrum, n=n)
     envelope = torch.zeros(1, n)
-    envelope[:, int(t0 * sample_rate):int(t1 * sample_rate)] = 1.0
-    band = band / band.std() * level * clean.std() / clean.std()
-    return clean + band * envelope * (clean.abs().max() / max(band.abs().max(), 1e-9)) * level
+    lo, hi = int(t0 * sample_rate), int(t1 * sample_rate)
+    envelope[:, lo:hi] = 1.0
+    speech_rms = clean[:, lo:hi].std().clamp(min=1e-9)
+    band = band / band.std().clamp(min=1e-9) * speech_rms * (10.0 ** (-snr_db / 20.0))
+    return clean + band * envelope
 
 
 def region_slices(model, n_frames, centre_hz, bandwidth_hz, t0, t1):
+    """TF support of a burst injected by inject_burst, which band-limits to
+    centre +- bandwidth/2. Using +- bandwidth here made the scored region 19 bins wide
+    where the burst is 9, inflating every localisation number."""
     freqs = torch.fft.rfftfreq(n_fft, 1 / sample_rate).numpy()
-    f_idx = np.where((freqs >= centre_hz - bandwidth_hz) & (freqs <= centre_hz + bandwidth_hz))[0]
+    half = bandwidth_hz / 2.0
+    f_idx = np.where((freqs >= centre_hz - half) & (freqs <= centre_hz + half))[0]
     hop = model.preproc.hop_length
     t_lo, t_hi = int(t0 * sample_rate / hop), min(n_frames - 1, int(t1 * sample_rate / hop))
     return slice(int(f_idx[0]), int(f_idx[-1]) + 1), slice(t_lo, t_hi + 1)
@@ -101,6 +111,14 @@ def main():
     parser.add_argument("--bandwidth_hz", type=float, default=300.0)
     parser.add_argument("--t0", type=float, default=1.0)
     parser.add_argument("--t1", type=float, default=1.6)
+    parser.add_argument("--snr_db", type=float, default=0.0, help="burst SNR against the speech in the burst interval")
+    parser.add_argument("--probe", type=str, default="displaced", choices=["displaced", "colocated"],
+                        help="'displaced' explains a region away from the burst, so the "
+                             "ground truth is not the region being explained; 'colocated' "
+                             "explains the burst region itself and is CIRCULAR -- it scores "
+                             "how much mass a method returns to the cell it was asked about, "
+                             "which rewards diagonal attribution regardless of the model")
+    parser.add_argument("--probe_hz", type=float, default=800.0, help="displaced probe centre frequency")
     parser.add_argument("--outdir", type=str, default="DeepShap/attributions/validation")
     parser.add_argument("--skip_occlusion", action="store_true")
     parser.add_argument("--patch", type=int, nargs=2, default=[16, 8])
@@ -114,25 +132,49 @@ def main():
 
     clean = (read_wav(args.input) if args.input else synthetic_speech()).to(device)
     clean = clean / clean.abs().max() * 0.5
-    noisy = inject_burst(clean, args.centre_hz, args.bandwidth_hz, args.t0, args.t1)
+    noisy = inject_burst(clean, args.centre_hz, args.bandwidth_hz, args.t0, args.t1,
+                         snr_db=args.snr_db)
 
     log_power = model.log_power(model.preproc(noisy))                 # [1, F, T]
     n_freq, n_frames = log_power.shape[1], log_power.shape[2]
-    f_slice, t_slice = region_slices(model, n_frames, args.centre_hz, args.bandwidth_hz, args.t0, args.t1)
-
+    # Ground truth = where the burst actually is.
+    gt_f, gt_t = region_slices(model, n_frames, args.centre_hz, args.bandwidth_hz, args.t0, args.t1)
     ground_truth = np.zeros((n_freq, n_frames), dtype=bool)
-    ground_truth[f_slice, t_slice] = True
-    print(f"spectrogram {n_freq} x {n_frames} frames; explaining the mask logit over "
-          f"freq bins {f_slice.start}-{f_slice.stop - 1}, frames {t_slice.start}-{t_slice.stop - 1}")
+    ground_truth[gt_f, gt_t] = True
+
+    # The region whose mask logit we explain. Keeping it separate from the ground truth is
+    # the whole point: if they coincide, the metric rewards a method for returning mass to
+    # the cell it was asked about, which is circular and penalises exactly the non-local
+    # behaviour this model turns out to have.
+    if args.probe == "colocated":
+        f_slice, t_slice = gt_f, gt_t
+    else:
+        f_slice, t_slice = region_slices(model, n_frames, args.probe_hz, args.bandwidth_hz,
+                                         args.t0, args.t1)
+
+    print(f"spectrogram {n_freq} x {n_frames} frames")
+    print(f"burst (ground truth): freq bins {gt_f.start}-{gt_f.stop - 1} "
+          f"({args.centre_hz:.0f} Hz), frames {gt_t.start}-{gt_t.stop - 1}, SNR {args.snr_db:+.0f} dB")
+    print(f"explained region    : freq bins {f_slice.start}-{f_slice.stop - 1}, "
+          f"frames {t_slice.start}-{t_slice.stop - 1}   [probe={args.probe}]")
+    if args.probe == "colocated":
+        print("  WARNING: co-located probe -- ground truth IS the explained region, so these "
+              "numbers measure self-attribution, not localisation.")
     print(f"ground-truth region covers {ground_truth.mean() * 100:.2f}% of the plane "
           f"(so enrichment 1.0 = chance)\n")
 
     with torch.no_grad():
         mask = torch.sigmoid(model.mask_logits(log_power))[0]
-    print(f"sanity: mean mask inside the burst region = {mask[f_slice, t_slice].mean():.3f} "
-          f"vs {mask.mean():.3f} overall -- the model does suppress it\n")
+    inside, overall = float(mask[gt_f, gt_t].mean()), float(mask.mean())
+    print(f"sanity: mean mask inside the burst region = {inside:.3f} vs {overall:.3f} overall "
+          f"(local suppression = {overall - inside:+.3f})")
+    if overall - inside < 0.05:
+        print("  note: little LOCAL suppression. Consistent with the rank-one coupling result "
+              "-- NsNet2 gates broadband on speech presence rather than notching out a "
+              "narrowband interferer. Not a bug in the probe.")
+    print()
 
-    baselines = noise_floor_baselines(log_power, model)
+    baselines = noise_floor_baselines(log_power)
     results, maps = {}, {}
     for method in METHODS:
         attribution, delta = attribute_region(model, log_power, f_slice, t_slice,
@@ -143,6 +185,14 @@ def main():
         print(f"  {method:22s} enrichment={scores['enrichment']:6.2f}x  "
               f"mass={scores['mass_fraction'] * 100:5.2f}%  pointing={str(scores['pointing']):5s}"
               + (f"  |delta|={delta:.3f}" if delta is not None else ""))
+
+    for name, control in control_maps(log_power).items():
+        scores = localisation_scores(control, ground_truth)
+        scores["convergence_delta"] = None
+        results[name], maps[name] = scores, control
+        print(f"  {name:22s} enrichment={scores['enrichment']:6.2f}x  "
+              f"mass={scores['mass_fraction'] * 100:5.2f}%  pointing={str(scores['pointing']):5s}"
+              "   <- control")
 
     if not args.skip_occlusion:
         print("\n  running occlusion reference (this is the slow one)...")

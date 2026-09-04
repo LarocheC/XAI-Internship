@@ -83,46 +83,72 @@ benchmark — see `DeepShap/validate_attributions.py`.
 ## Reproduction after fixing
 
 `DeepShap/validate_attributions.py` injects a narrowband burst at a known time and
-frequency, so the right answer is known by construction, and scores every method on how
-much attribution mass lands inside that region. `enrichment` is the mass fraction divided
-by the region's area fraction, so **1.0 is chance**.
+frequency, then explains the mask logit at a *different* region and asks how much
+attribution mass lands on the burst. `enrichment` is mass fraction over area fraction, so
+**1.0 is chance**, and two controls are reported on every row: a random ranking (null,
+must come out at 1.0) and an energy detector that ranks bins by their own log-power.
 
-On a 3.4 s speech clip with a 300 Hz-wide burst at 3 kHz over 1.0–1.6 s (region = 1.53% of
-the time-frequency plane). The model does suppress the burst — mean mask 0.24 inside the
-region against 0.86 overall — so the question is well posed.
+A first version of this benchmark was circular — it explained the burst region *itself*,
+so it scored a method on how much mass it returned to the cell it had been asked about.
+That rewards diagonal attribution regardless of what the model does, and it inflated every
+number; the ground-truth region was also twice as wide as the actual burst. Both are fixed;
+`--probe colocated` still reproduces the old behaviour but prints a warning. The numbers
+below are from the non-circular displaced probe.
 
-| pipeline | method | enrichment | mass in region | ‖convergence delta‖ |
-| --- | --- | --- | --- | --- |
-| original | DeepLiftShap on output band energy | **1.04×** | 1.59% | 89.3 |
-| fixed | integrated gradients | **7.16×** | 10.99% | **0.14** |
-| fixed | DeepLIFT | 6.90× | 10.59% | 2.72 |
-| fixed | gradient SHAP | 6.95× | 10.65% | 4.42 |
-| fixed | saliency | 4.14× | 6.35% | — |
-| fixed | input × gradient | 1.64× | 2.51% | — |
+3.4 s of real speech, 300 Hz burst at 3 kHz over 1.0–1.6 s, mask logit explained at 800 Hz.
+Ground-truth region = 0.73% of the time-frequency plane.
 
-The original pipeline scores **at chance**, and its map has a coefficient of variation of
-0.064 — it is a constant plane. This is the quantitative form of "the results were not
-super promising": the maps carried no information, so there was nothing to interpret.
+| method | burst 0 dB | −10 dB | −20 dB |
+| --- | --- | --- | --- |
+| DeepLiftShap | 4.11× | 4.95× | **6.33×** |
+| DeepLIFT | 4.13× | 4.95× | 6.32× |
+| integrated gradients | 4.11× | 4.56× | 5.27× |
+| gradient SHAP | 4.21× | 4.63× | 5.22× |
+| input × gradient | 0.87× | 1.67× | 3.07× |
+| saliency | 2.04× | 2.02× | 2.39× |
+| *energy detector (control)* | *1.86×* | *2.06×* | *2.25×* |
+| *random (control)* | *1.03×* | *1.03×* | *1.03×* |
 
-Two further results are worth noting.
+The random control sits at chance, and enrichment increases monotonically as the burst gets
+louder — the degradation control a localisation metric needs in order to be believed. The
+attribution methods beat the energy detector by roughly 2.8× at the strongest burst;
+saliency barely beats it and input × gradient starts *below* chance.
 
-**Integrated gradients is the method to use here, not DeepSHAP.** Its convergence delta is
-an order of magnitude smaller than DeepLIFT's even after the nonlinearities are registered
-properly, because the two GRU layers remain undecomposable by the rescale rule. That is the
-honest verdict on DeepLIFT/DeepSHAP for a recurrent masking model, and it is measured rather
-than argued.
+For comparison on the same stimulus and metric, the **original pipeline scores at chance**:
+1.04× enrichment, with a map whose coefficient of variation is 0.064 — a constant plane.
+That is the quantitative form of "the results were not super promising": the maps carried no
+information, so there was nothing to interpret.
 
-**All methods agree strongly with a brute-force occlusion sweep** (Spearman ρ = 0.81–0.90
-over the full plane), which is assumption-free and therefore the best available faithfulness
-reference. That agreement, more than the enrichment number, is what says the explanations
-are now tracking the model.
+## The finding that came out of the fixed pipeline
 
-A caveat on the enrichment metric: it scores localisation against *where the noise was
-injected*, which is not necessarily *where the model looked*. The occlusion reference itself
-concentrates less mass in the injected region (2.0x) than the gradient methods do, though it
-was computed on 16x8-bin patches, which dilutes a region only 19 bins tall — how much of that
-gap is patch granularity and how much is real is still open. Separately,
-probing shows the mask decision at 3 kHz draws heavily on 125–650 Hz speech-band energy —
-i.e. a global, VAD-like speech-presence decision rather than a per-bin one. That is a real
-property of NsNet2, not a failure of the metric, and it is the kind of finding the original
-pipeline was structurally incapable of producing.
+With attribution working, a much sharper question becomes answerable: how does the mask
+decision at output frequency `f_out` depend on input frequency `f_in`? The coupling matrix
+`R[f_in, f_out] = sum_t |dz(t0, f_out) / dL(t, f_in)|` is exactly computable — 257 backward
+passes on one forward graph, no baselines, no completeness axiom, no Captum hooks, and no
+need to decompose the GRUs. It is therefore immune to every defect above.
+
+On real speech at 5 dB SNR, in the regime where the model's VAD is demonstrably engaged
+(mean mask gain 0.199 on speech frames against 0.016 on pauses, a 12.4× ratio):
+
+| system | top-1 singular value | participation ratio | diagonal enrichment |
+| --- | --- | --- | --- |
+| NsNet2 mask logit (3 frames) | 0.946–0.992 | 1.02–1.12 | 1.04–1.42 |
+| oracle Wiener gain (control) | 0.014–0.019 | 111–126 | **15.37** |
+
+`R` is essentially **rank one**. That means `R ≈ a[f_in] ⊗ b[f_out]`: the shape of the
+input-evidence profile is the same for every output frequency, and per-frequency differences
+amount to a single scalar. NsNet2's mask is a **global speech-presence gate, not a per-bin
+SNR estimator**. The oracle Wiener control — diagonal by construction — is measured through
+the identical pipeline and comes out strongly local, so the apparatus provably detects
+per-bin behaviour when it is there.
+
+This also explains a puzzle in the table above: a narrowband burst 20 dB above the speech
+barely changes the mask *inside its own band* (0.788 against 0.820 overall). The model does
+not notch out interferers; it decides whether speech is present and gates broadband.
+
+Two supporting measurements: 39.3% of pre-sigmoid mask logits have |z| > 4.6, where the
+sigmoid derivative is below 0.01, and the median |z| is 4.07 — more than a third of the
+time-frequency plane is gradient-dead on the mask *output*, which is the empirical
+justification for targeting logits. And all attribution methods agree with a brute-force
+occlusion sweep at Spearman 0.81–0.90.
+

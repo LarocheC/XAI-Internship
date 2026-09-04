@@ -59,12 +59,21 @@ class NsNet2(nn.Module):
         )
 
     def forward(self, x_noisy):
+        # log_power squeezes a channel axis and _forward puts one back, so a plain [B, T]
+        # batch used to come back as [B, B, T]. Normalise to [B, 1, T] on the way in and
+        # restore the caller's rank on the way out.
+        squeeze_channel = x_noisy.dim() == 2
+        if squeeze_channel:
+            x_noisy = x_noisy.unsqueeze(1)
         stft_noisy = self.preproc(x_noisy)
         mask_pred = self._forward(stft_noisy)
         # apply mask
         stft_pred = stft_noisy * mask_pred
-        x_pred = self.postproc(stft_pred)
-        return x_pred
+        # Without length=, the iSTFT returns floor(n_frames) * hop samples, which drops up
+        # to one hop of audio: 16007 samples in gave 15872 out. Any intrusive metric
+        # (PESQ, ESTOI, SI-SDR) computed against the clean reference would be misaligned.
+        x_pred = self.postproc(stft_pred, length=x_noisy.shape[-1])
+        return x_pred.squeeze(1) if squeeze_channel else x_pred
 
     def log_power(self, stft_noisy):
         """Complex STFT -> the log-power features the network consumes, shape [B, F, T]."""
