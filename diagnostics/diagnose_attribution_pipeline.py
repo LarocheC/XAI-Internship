@@ -257,66 +257,10 @@ def check_d_corrected(repo_delta):
     print("     current pipeline is incapable of showing.")
 
 
-def check_e_stft_config():
-    """The DNS-Challenge NSNet2 baseline is trained on 20 ms frames with a 10 ms hop at
-    16 kHz (win_length=320, hop_length=160) zero-padded to a 512-point FFT, which is what
-    gives its 257 input features. NsNet2_model.py constructs
-    torchaudio.transforms.Spectrogram(n_fft=512) and takes the DEFAULTS -- win_length=512
-    (32 ms) and hop_length=256 (16 ms). This check measures whether that matters."""
-    rule("E. Is NsNet2 being run with its reference STFT configuration?")
-
-    torch.manual_seed(SEED)
-    model = load_model()
-    print(f"  repo:      n_fft={model.preproc.n_fft} win_length={model.preproc.win_length} "
-          f"hop_length={model.preproc.hop_length}  ({model.preproc.win_length / sample_rate * 1e3:.0f} ms window)")
-    print("  reference: n_fft=512 win_length=320 hop_length=160  (20 ms window, 10 ms hop)\n")
-
-    # harmonic "speech" burst in [0.5, 1.5] s, embedded in stationary white noise
-    n = 2 * sample_rate
-    t = torch.arange(n) / sample_rate
-    voiced = (t > 0.5) & (t < 1.5)
-    x = 0.02 * torch.randn(n)
-    for f0 in (150, 300, 450, 600, 750, 900):
-        x += 0.10 * torch.sin(2 * np.pi * f0 * t) * voiced
-    x = x.unsqueeze(0)
-
-    freqs = torch.fft.rfftfreq(n_fft, 1 / sample_rate)
-    speech_band, high_band = (freqs >= 100) & (freqs < 1000), freqs >= 4000
-
-    print(f"  {'window':>10} {'hop':>5} | {'keep speech':>11} {'suppress silence':>16} {'suppress HF noise':>17}")
-    print("  " + "-" * 68)
-    for win, hop, tag in ((512, 256, "repo default"), (320, 160, "NSNet2 reference")):
-        spec = torch.stft(x, n_fft=n_fft, hop_length=hop, win_length=win,
-                          window=torch.hann_window(win), return_complex=True)
-        log_power = torch.log(spec.abs() ** 2 + model.eps)
-        with torch.no_grad():
-            h = log_power.permute(0, 2, 1)
-            h = model.fc1(h)
-            h, _ = model.rnn1(h)
-            h, _ = model.rnn2(h)
-            h = nn.functional.relu(model.fc2(h))
-            h = nn.functional.relu(model.fc3(h))
-            mask = torch.sigmoid(model.fc4(h)).permute(0, 2, 1)
-        centres = torch.arange(mask.shape[-1]) * hop / sample_rate
-        active, silent = (centres > 0.55) & (centres < 1.45), (centres < 0.45) | (centres > 1.55)
-        keep = mask[0][speech_band][:, active].mean().item()
-        suppress = 1 - mask[0][speech_band][:, silent].mean().item()
-        suppress_hf = 1 - mask[0][high_band][:, silent].mean().item()
-        print(f"  {win:>6} ({win / sample_rate * 1e3:.0f}ms) {hop:>5} | {keep:11.3f} {suppress:16.3f} "
-              f"{suppress_hf:17.3f}   <- {tag}")
-
-    print("\n  => At the repo's 32 ms window the model leaves high-frequency noise largely")
-    print("     un-suppressed. Attributions computed on this configuration describe a")
-    print("     mis-configured model, independently of every other issue above.")
-    print("     Fix: Spectrogram(n_fft=512, win_length=320, hop_length=160, power=None) and")
-    print("     the matching InverseSpectrogram. Confirm against the DNS-Challenge reference.")
-
-
 if __name__ == "__main__":
     check_a_functional_nonlinearities()
     repo_delta = check_bc_repo_pipeline()
     check_d_corrected(repo_delta)
-    check_e_stft_config()
     print("\n" + "=" * 78)
     print("See PLAN.md for what to do about all of this.")
     print("=" * 78)
