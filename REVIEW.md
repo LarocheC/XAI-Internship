@@ -119,7 +119,9 @@ are now tracking the model.
 
 A caveat on the enrichment metric: it scores localisation against *where the noise was
 injected*, which is not necessarily *where the model looked*. The occlusion reference itself
-concentrates less mass in the injected region than the gradient methods do, and separate
+concentrates less mass in the injected region (2.0x) than the gradient methods do, though it
+was computed on 16x8-bin patches, which dilutes a region only 19 bins tall — how much of that
+gap is patch granularity and how much is real is still open. Separately,
 probing shows the mask decision at 3 kHz draws heavily on 125–650 Hz speech-band energy —
 i.e. a global, VAD-like speech-presence decision rather than a per-bin one. That is a real
 property of NsNet2, not a failure of the metric, and it is the kind of finding the original
