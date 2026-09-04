@@ -1,5 +1,13 @@
 # Paper direction: the effective rank of a learned time-frequency mask
 
+> **CORRECTION — the measurement below is withdrawn.** The coupling-matrix statistic cannot
+> distinguish rank: a synthetic full-rank Jacobian pushed through it reports top-1 SV 0.991 and
+> participation ratio 1.02, the same values reported here for NSNet2, and the oracle-Wiener
+> "control" reading of 15.37 is the metric's geometric ceiling rather than a model property.
+> See `RETRACTION.md`. **The prior-art analysis in this file is unaffected and remains the most
+> valuable part of it** — the gap it identifies is real, there is simply no measurement in hand
+> to fill it yet. A forward-only replacement on the predicted gain surface is under test.
+
 Target: STM32N6. Goal: a novel, publishable result. This note records what is measured, what
 the prior-art sweep found, and which of three candidate theses to back.
 

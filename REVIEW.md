@@ -119,36 +119,15 @@ For comparison on the same stimulus and metric, the **original pipeline scores a
 That is the quantitative form of "the results were not super promising": the maps carried no
 information, so there was nothing to interpret.
 
-## The finding that came out of the fixed pipeline
+## The finding that came out of the fixed pipeline — WITHDRAWN
 
-With attribution working, a much sharper question becomes answerable: how does the mask
-decision at output frequency `f_out` depend on input frequency `f_in`? The coupling matrix
-`R[f_in, f_out] = sum_t |dz(t0, f_out) / dL(t, f_in)|` is exactly computable — 257 backward
-passes on one forward graph, no baselines, no completeness axiom, no Captum hooks, and no
-need to decompose the GRUs. It is therefore immune to every defect above.
+This section previously reported that NSNet2's mask decision has a rank-one input-frequency ×
+output-frequency coupling, validated by an oracle Wiener control. **That result is an artefact
+of the estimator.** Taking the absolute value before summing over time manufactures a
+rank-one constant floor out of any dense Jacobian: fed a synthetic *full-rank* Jacobian, the
+same estimator reports top-1 singular value 0.991 and participation ratio 1.02 — the values
+reported for NSNet2. The Wiener control's enrichment of 15.37 is the metric's geometric
+ceiling, `1/(area fraction)` = 15.42, not a property of the model.
 
-On real speech at 5 dB SNR, in the regime where the model's VAD is demonstrably engaged
-(mean mask gain 0.199 on speech frames against 0.016 on pauses, a 12.4× ratio):
-
-| system | top-1 singular value | participation ratio | diagonal enrichment |
-| --- | --- | --- | --- |
-| NsNet2 mask logit (3 frames) | 0.946–0.992 | 1.02–1.12 | 1.04–1.42 |
-| oracle Wiener gain (control) | 0.014–0.019 | 111–126 | **15.37** |
-
-`R` is essentially **rank one**. That means `R ≈ a[f_in] ⊗ b[f_out]`: the shape of the
-input-evidence profile is the same for every output frequency, and per-frequency differences
-amount to a single scalar. NsNet2's mask is a **global speech-presence gate, not a per-bin
-SNR estimator**. The oracle Wiener control — diagonal by construction — is measured through
-the identical pipeline and comes out strongly local, so the apparatus provably detects
-per-bin behaviour when it is there.
-
-This also explains a puzzle in the table above: a narrowband burst 20 dB above the speech
-barely changes the mask *inside its own band* (0.788 against 0.820 overall). The model does
-not notch out interferers; it decides whether speech is present and gates broadband.
-
-Two supporting measurements: 39.3% of pre-sigmoid mask logits have |z| > 4.6, where the
-sigmoid derivative is below 0.01, and the median |z| is 4.07 — more than a third of the
-time-frequency plane is gradient-dead on the mask *output*, which is the empirical
-justification for targeting logits. And all attribution methods agree with a brute-force
-occlusion sweep at Spearman 0.81–0.90.
-
+See `RETRACTION.md` for the full account and `diagnostics/estimator_null.py` to reproduce.
+The repaired-pipeline results above do not depend on it and stand.

@@ -1,5 +1,11 @@
 # Where to take this next
 
+> **The bet stated below is withdrawn — see `RETRACTION.md`.** The rank-one coupling result it
+> rests on is an artefact of the estimator (absolute value taken before summing over time
+> manufactures a rank-one floor; a synthetic full-rank Jacobian scores identically). Phases 0
+> and 3–6 stand on their own; Phases 1 and 2 need re-scoping around a statistic with a matched
+> null. The rest of this file is kept as written for the record.
+
 The bet: **NsNet2's suppression mask is a global speech-presence gate, not a per-bin SNR
 estimator — and that is a characterisation worth publishing and worth acting on.**
 
