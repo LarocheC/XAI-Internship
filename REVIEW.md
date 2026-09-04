@@ -79,3 +79,48 @@ measurement of whether the model was even doing a good job on the file being exp
 The one strong instinct in the original work is the injected-noise probe. Injecting a tone
 at a known time and frequency *creates* a ground truth, and that is the seed of a real
 benchmark — see `DeepShap/validate_attributions.py`.
+
+## Reproduction after fixing
+
+`DeepShap/validate_attributions.py` injects a narrowband burst at a known time and
+frequency, so the right answer is known by construction, and scores every method on how
+much attribution mass lands inside that region. `enrichment` is the mass fraction divided
+by the region's area fraction, so **1.0 is chance**.
+
+On a 3.4 s speech clip with a 300 Hz-wide burst at 3 kHz over 1.0–1.6 s (region = 1.53% of
+the time-frequency plane). The model does suppress the burst — mean mask 0.24 inside the
+region against 0.86 overall — so the question is well posed.
+
+| pipeline | method | enrichment | mass in region | ‖convergence delta‖ |
+| --- | --- | --- | --- | --- |
+| original | DeepLiftShap on output band energy | **1.04×** | 1.59% | 89.3 |
+| fixed | integrated gradients | **7.16×** | 10.99% | **0.14** |
+| fixed | DeepLIFT | 6.90× | 10.59% | 2.72 |
+| fixed | gradient SHAP | 6.95× | 10.65% | 4.42 |
+| fixed | saliency | 4.14× | 6.35% | — |
+| fixed | input × gradient | 1.64× | 2.51% | — |
+
+The original pipeline scores **at chance**, and its map has a coefficient of variation of
+0.064 — it is a constant plane. This is the quantitative form of "the results were not
+super promising": the maps carried no information, so there was nothing to interpret.
+
+Two further results are worth noting.
+
+**Integrated gradients is the method to use here, not DeepSHAP.** Its convergence delta is
+an order of magnitude smaller than DeepLIFT's even after the nonlinearities are registered
+properly, because the two GRU layers remain undecomposable by the rescale rule. That is the
+honest verdict on DeepLIFT/DeepSHAP for a recurrent masking model, and it is measured rather
+than argued.
+
+**All methods agree strongly with a brute-force occlusion sweep** (Spearman ρ = 0.81–0.90
+over the full plane), which is assumption-free and therefore the best available faithfulness
+reference. That agreement, more than the enrichment number, is what says the explanations
+are now tracking the model.
+
+A caveat on the enrichment metric: it scores localisation against *where the noise was
+injected*, which is not necessarily *where the model looked*. The occlusion reference itself
+concentrates less mass in the injected region than the gradient methods do, and separate
+probing shows the mask decision at 3 kHz draws heavily on 125–650 Hz speech-band energy —
+i.e. a global, VAD-like speech-presence decision rather than a per-bin one. That is a real
+property of NsNet2, not a failure of the metric, and it is the kind of finding the original
+pipeline was structurally incapable of producing.
