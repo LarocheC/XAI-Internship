@@ -148,8 +148,20 @@ is richer.
 
 **This converges with the truncation test from an independent direction.** There, quality
 saturated at rank 16–32, matching `r99 ≈ 18` and not `r90 ≈ 4.7`. Two separate lines of
-evidence now say the same thing: **`r99` is the statistic; `r90` is not.** Every `r90` figure
-earlier in this document should be read with that in mind.
+evidence now say the same thing: **`r99` is the statistic; `r90` is not.**
+
+**Does the cross-architecture falsification survive the switch to `r99`? Yes.** Re-read on
+`r99`, each model against its own oracle in its own gain domain:
+
+| system | r99 | own IRM r99 | ratio |
+| --- | ---: | ---: | ---: |
+| NSNet2 | 18.3 | 86.7 | **0.21× — far below its target** |
+| LiSenNet `conv-hardened` | 127.2 | 112.5 | **1.13× — above its target** |
+
+Same conclusion as on `r90`, and for the same reason: NSNet2's gain surface is far simpler than
+the mask it was trained to approximate, LiSenNet's is not. The two models are also well
+separated on `r90` there (4.7 vs 41.3), so unlike the eco8 width ladder that statistic was not
+saturated in this comparison. The class-level claim is falsified on either statistic.
 
 ---
 
