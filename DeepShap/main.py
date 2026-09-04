@@ -27,7 +27,8 @@ from utils.attributions_utils import (
 
 
 def process_file(
-    input_path, division, noise_type, baseline_type, freq_range=None, rms_amplitude=None
+    input_path, division, noise_type, baseline_type, freq_range=None, rms_amplitude=None,
+    model=None, device=None
 ):
     torch.cuda.empty_cache()
     file_basename = os.path.split(input_path)[-1]
@@ -39,7 +40,8 @@ def process_file(
     print(
         f"\nPROCESSING {input_path} \nDivision: {division} \nNoise type: {noise_type} \nFrequency range: {freq_range} \nRMS amplitude: {rms_amplitude}"
     )
-    model, device = load_nsnet2_model()
+    if model is None:
+        model, device = load_nsnet2_model()
 
     deepshap_input, baseline, deepshap_input_path = prepare_deepshap_input_and_baseline(
         input_path,
@@ -112,7 +114,7 @@ def main():
     parser.add_argument(
         "--noise_type",
         type=str,
-        default="not added",
+        default="not_added",
         choices=["not_added", "impulsive", "sinusoidal"],
         help="Type of noise to add: 'not_added', 'impulsive' for impulsive noise, 'sinusoidal' for sinusoidal noise",
     )
@@ -131,6 +133,10 @@ def main():
         help="List of RMS amplitudes for sinusoidal noise (e.g., 0.01)",
     )
     args = parser.parse_args()
+
+    # Loaded once: the previous code re-read the 11 MB checkpoint from disk for every
+    # (file, division) pair.
+    model, device = load_nsnet2_model()
 
     wav_files = [
         os.path.join(args.input_dir, f)
@@ -151,6 +157,8 @@ def main():
                         args.baseline_type,
                         freq_range,
                         rms_amplitude,
+                        model=model,
+                        device=device,
                     )
             else:
                 process_file(
@@ -160,6 +168,8 @@ def main():
                     args.baseline_type,
                     None,
                     None,
+                    model=model,
+                    device=device,
                 )
     print("DeepLIFTShap attributions computed and saved successfully : noise type: "
           f"{args.noise_type}, baseline type: {args.baseline_type}")

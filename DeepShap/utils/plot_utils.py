@@ -4,6 +4,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import TwoSlopeNorm
 from scipy.ndimage import zoom
 from utils.audio_features import compute_log_mel_spectrogram
 from config.parameters import sample_rate
@@ -94,12 +95,17 @@ def plot_spectrogram_and_attributions(
     cbar = fig.colorbar(im, ax=axes[0], shrink=0.8)
     cbar.set_label("Amplitude (dB)")
 
-    # Plot the attribution map on the second subplot
-    axes[1].imshow(
+    # Plot the attribution map on the second subplot. "seismic" is a diverging colormap,
+    # so zero must be pinned to its centre or the white point lands at an arbitrary value;
+    # the 99.5th percentile keeps a couple of outlier cells from flattening everything else.
+    attr_limit = max(float(np.percentile(np.abs(converted_attr_map), 99.5)), 1e-12)
+    attr_norm = TwoSlopeNorm(vmin=-attr_limit, vcenter=0.0, vmax=attr_limit)
+    attr_im = axes[1].imshow(
         converted_attr_map,
         aspect="auto",
         origin="lower",
         cmap="seismic",
+        norm=attr_norm,
         interpolation="none",
     )
     axes[1].set_title(f"DeepLIFTShap Attributions, Temporal Slicing = 1/{division}")
@@ -113,7 +119,8 @@ def plot_spectrogram_and_attributions(
     axes[1].set_yticklabels(
         [f"{mel_frequencies[idx]:.0f} Hz" for idx in selected_frequencies]
     )
-    cbar = fig.colorbar(plt.cm.ScalarMappable(cmap="seismic"), ax=axes[1], shrink=0.8)
+    # Built from the image itself, so the tick labels are the actual attribution values.
+    cbar = fig.colorbar(attr_im, ax=axes[1], shrink=0.8)
     cbar.set_label("Attribution Value")
     plt.tight_layout()
     save_plot(

@@ -1,5 +1,7 @@
 torch
 torchaudio
+# torchaudio >= 2.9 loads audio through torchcodec; install it or use a 2.8.x torchaudio
+torchcodec
 numpy
 scipy
 matplotlib
@@ -7,4 +9,7 @@ tqdm
 torchvision
 captum
 joblib
-argparse
+# activation_visualise.py only
+torchlens
+dill
+Pillow
