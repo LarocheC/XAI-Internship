@@ -28,6 +28,21 @@ Discrimination between true rank 1 and true rank 257 is **0.004**. The values re
 NSNet2 (top-1 SV 0.925–0.992, PR 1.02–1.17) lie **inside the full-rank null**. Reproduce with
 `diagnostics/estimator_null.py`.
 
+### Confirmed independently on the real checkpoint
+
+The synthetic argument above is analytic. The empirical version agrees. Running the *same*
+NSNet2 architecture with **random weights** — each tensor redrawn at the trained tensor's own
+standard deviation, everything else identical:
+
+| NSNet2 | top-1 SV | participation ratio | diag enrichment |
+| --- | ---: | ---: | ---: |
+| trained checkpoint | 0.925–0.992 | 1.02–1.17 | 1.04–1.59 |
+| **untrained, random weights** | **0.966** | **1.07** | 0.99 |
+
+An untrained network reads as the same "rank-one global gate" as the trained one. Whatever the
+statistic was measuring, it was not something training discovered. Reproduce with
+`diagnostics/coupling_matrix.py` via the `nsnet2_untrained` model in the cross-model script.
+
 ## Why the control did not catch it
 
 The oracle Wiener gain is per-bin by construction, so its off-diagonal entries are *exactly*
