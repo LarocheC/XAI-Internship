@@ -125,7 +125,39 @@ Two limits on how much this result can bear:
   that `r90` can move at all on this family — e.g. by checking that it responds to SNR, noise
   type and utterance within a single checkpoint.
 
-This is the third successive hypothesis in this branch to die at its first proper control.
+### The sensitivity check, run afterwards, changes which statistic is usable
+
+`diagnostics/gain_rank_sensitivity.py`, one checkpoint, 60 conditions — 4 noise types
+(white, pink, tonal, high-pass) × 3 SNRs (−5, 5, 20 dB) × 5 utterances:
+
+| statistic | range observed | responds to SNR? |
+| --- | --- | --- |
+| `r90` | {1, 2, 3}, overwhelmingly 2 | no |
+| `r99` | 3 → 8 | yes — rises with SNR (white 4/4/6, pink 5/6/7 at −5/5/20 dB) |
+
+**`r90` is saturated on this family and must not be used.** The "constant at 2.0 across 36×
+parameters" result above is therefore void *as evidence*: a statistic that cannot move tells
+you nothing by not moving. Read the width sweep on `r99` instead — 4.3, 3.8, 4.3, 3.2, 5.7,
+4.7 for 77k → 2.78M parameters, Spearman +0.493 at n=6, the wrong sign and well inside the
+±1–2 per-utterance spread visible in the sensitivity table. The hypothesis stays unsupported,
+now for a reason that has been established rather than assumed.
+
+`r99` rising with SNR is also the physically sensible direction: at low SNR the model
+suppresses broadly and the surface is simple; at high SNR it must be selective and the surface
+is richer.
+
+**This converges with the truncation test from an independent direction.** There, quality
+saturated at rank 16–32, matching `r99 ≈ 18` and not `r90 ≈ 4.7`. Two separate lines of
+evidence now say the same thing: **`r99` is the statistic; `r90` is not.** Every `r90` figure
+earlier in this document should be read with that in mind.
+
+---
+
+This is the third successive hypothesis in this branch to die at its first proper control, and
+the fourth measurement to need withdrawing or re-reading after a check that cost minutes. The
+recurring failure is not a coding bug — the code did what was written — but a missing
+*sensitivity* or *null* check on the measurement itself, run after the interesting comparison
+instead of before it. Every statistic in this file now ships with both.
 
 ## What is still owed
 
