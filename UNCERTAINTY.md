@@ -86,6 +86,53 @@ untested and is the obvious next design step.
   rule, not the signal, is broken. Per-bin gating fixed it and turned the oracle into a real
   ceiling. Kept here because the failure is instructive.
 
+## The capacity-fair comparison — and a correction
+
+An earlier claim in this branch, that internal state beats output-level signals by 2.8× on AP,
+used a **4-dimensional pooled** mask summary as the output baseline. That understates the
+output: it is a pooled view of a 257-bin surface. Given the output at full resolution
+(`diagnostics/fair_output_baseline.py`, NSNet2, 815k train / 1.04M test bins, held out by
+speaker):
+
+| features | dim | AUC | AP | uses |
+| --- | ---: | ---: | ---: | --- |
+| own gain only | 3 | 0.796 | 0.390 | output |
+| mask across ±8 bins | 19 | 0.806 | 0.386 | **output only, full resolution** |
+| **64-d GRU state + own gain** | 67 | **0.844** | **0.473** | internal |
+| both | 83 | 0.848 | 0.469 | — |
+| chance | — | 0.500 | 0.077 | — |
+
+**Internal state beats a fair output baseline by ΔAP +0.087** — not 2.8×. The 2.8× figure is
+withdrawn.
+
+The corrected effect replicates independently: an adversarial review of this work measured
+ΔAP **+0.078, 95% CI [+0.043, +0.111]** on *LiSenNet* (24-d bottleneck tap vs the full 514-d
+output), with a paired bootstrap over clip blocks, and found the margin *grows* to +0.100 under
+a nonlinear readout. Different model, different experimenter, same answer to within 0.01 AP.
+
+Two further readings from the table. Extra output resolution does not rescue the output
+baseline on this model (19-d scores 0.386 against 3-d's 0.390) — it saturates. And adding the
+output on top of internal state adds nothing (0.469 vs 0.473), so internal state subsumes it.
+
+### The scope condition, which the paper must state
+
+Adverse prior art is explicit that internals usually add little over the output *when the
+output is available in full* — in one verifiable-reward-hacking study a linear probe reached
+AUC 0.998 while string-matching the output reached 100%. **Internals win where the output has
+been discarded.** On a streaming device that is exactly the situation: the full 257-bin mask
+history is not retained, while the recurrent state is, by construction, already there.
+
+### A structural limit: this cannot work on ConvFSENet
+
+ConvFSENet's head is `Conv1d(192 → 257, k=1)` + sigmoid. Measured from the published
+checkpoint: numerical rank **192 of 192**, σ_max 4.43, σ_min 0.0209, **condition 212** — full
+column rank and well conditioned. So `z = Wh + b` determines `h` exactly (`h = W⁺(z − b)`) and
+the sigmoid is elementwise invertible: **the deployed mask determines the 192-d residual state
+exactly, and the internal state carries no information the output lacks.** The hypothesis is
+structurally false for that model. It survives on LiSenNet and NSNet2, whose masks are produced
+through non-invertible paths — check the head's conditioning before assuming it holds anywhere
+else.
+
 ## Why this is the strongest direction in the branch
 
 It answers the original question — *could some method actually run on my MCU and produce
