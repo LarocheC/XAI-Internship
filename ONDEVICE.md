@@ -57,9 +57,23 @@ all out. This is the quantitative vindication of the forward-only direction in `
 and it is a stronger argument than "the NPU is inference-only".
 
 **A parameter-count intuition I was using is false.** "LiSenNet is 19× smaller than NSNet2
-`blockdiag_full`, so an explanation on it is 19× cheaper" is wrong: LiSenNet nc24 costs
-**1,002,566 MACs/frame against blockdiag_full's ~697,000 — 1.44× *more* arithmetic** despite
-19× fewer parameters. Probes and backward passes are priced in MACs, not parameters.
+`blockdiag_full`, so an explanation on it is 19× cheaper" is wrong. Counted independently by
+forward hooks (`diagnostics/count_macs.py`):
+
+| model | parameters | MACs/frame | MAC/param |
+| --- | ---: | ---: | ---: |
+| LiSenNet `conv-hardened` nc24 | 36,288 | **900,894** (hooks) | **24.8×** |
+| NSNet2 `blockdiag_full` | 701,657 | 701,657 (analytic) | 1.0× |
+
+**19.3× fewer parameters, 1.28× more per-frame arithmetic.** The mechanism is the point: a
+convolutional model reuses each weight across frequency positions, so MACs ≫ parameters, while
+an FC+GRU model uses each weight once per frame, so MACs ≈ parameters. Probes and backward
+passes are priced in MACs, so parameter count is the wrong unit for costing an explanation.
+
+(The grounding agent reported 1,002,566 MACs/frame and a 1.44× ratio. My hook count gives
+900,894 and 1.28× — an 11% disagreement, probably a difference in what is counted for the GRU
+gates and the sub-pixel upsampling. The direction and the mechanism are unaffected; use the
+hook figure, or better, re-count against the deployed graph.)
 
 **Full state telemetry is impossible.** The deployed nc24's state stream is 57,990 int8
 elements/frame = **3.62 MB/s**. Nothing like that leaves a hearing device.
