@@ -44,12 +44,36 @@ the direction worth pursuing, independently of how good any particular probe is.
 **A 67-feature probe beats the constant knob on PESQ** (+0.188 vs +0.140) and beats the
 matched-strength random control 3× (+0.062). It captures **29%** of the oracle headroom.
 
-## Caveats, before anyone builds on this
+## The matched-release control — and the resolution of the ESTOI puzzle
 
-* **ESTOI disagrees with PESQ.** The global knob scores 0.729 against the probe's 0.710 while
-  losing on PESQ. The advantage is metric-specific and unexplained. A plausible story — PESQ
-  rewards the probe's sparse targeted release, ESTOI prefers broad softening — is a hypothesis,
-  not a finding. Resolve this before claiming the probe wins.
+Softening a mask always trades noise removal against speech preservation, and the two methods
+release different amounts of gain, so a single-setting comparison cannot show the probe is
+*smarter* rather than merely at a luckier operating point. Sweeping both over release strength
+and comparing at matched release (mean `g' − g`), `diagnostics/uncertainty_matched_release.py`,
+64 clips per point:
+
+| mean release | global knob | **probe** | random | oracle |
+| ---: | --- | --- | --- | --- |
+| 0.020 | P=2.014 E=0.692 | **P=2.191 E=0.695** | P=2.079 E=0.695 | P=2.602 E=0.785 |
+| 0.037 | P≈2.03 E≈0.691 | **P=2.241 E=0.691** | P=2.083 E=0.691 | P≈2.83 E≈0.817 |
+
+**The probe curve dominates the global curve throughout the measurable range, on both metrics.**
+It reaches PESQ 2.241 while releasing 0.037 of gain; the global knob needs 0.149 — **4× more
+release** — to reach only 2.200, and degrades beyond that (2.043 at 0.282). *Where* the gain is
+released matters more than how much.
+
+**This resolves the ESTOI disagreement.** It was an operating-point artefact: the global knob's
+ESTOI advantage (0.729 vs 0.710 in the single-setting table above) came entirely from operating
+at ~4× the release the probe could reach. At matched release 0.020 the probe is *better* on
+ESTOI as well (0.695 vs 0.692). The earlier caveat is withdrawn.
+
+**Limit of the comparison.** The probe's release saturates at 0.037, because `u ∈ [0,1]` and the
+strength multiplier tops out at 1.0. Every matched-release row above 0.037 is flat extrapolation
+by `np.interp`, not measurement, and must not be quoted. The valid region is release ≤ 0.037.
+Letting the probe reach higher release (rescaling `u`, or a different correction form) is
+untested and is the obvious next design step.
+
+## Remaining caveats
 * **On matched (anechoic) conditions there is no headroom at all**: an earlier run of this
   experiment found the unmodified model best and every softening variant worse. The gain exists
   only under shift, which is consistent with the eco8/dnsmos reverb study finding a constant
@@ -74,8 +98,9 @@ about most.
 
 ## Next, in order
 
-1. **Explain the ESTOI/PESQ split.** Until that is understood the headline is not safe.
-2. **Close more of the 71% gap.** The probe is deliberately minimal; a small MLP, more of the
+1. **Let the probe reach higher release.** Its curve is still rising where it saturates at
+   0.037, so the measured advantage may understate it. Rescale `u` or change the correction form.
+2. **Close more of the gap to the oracle.** The probe is deliberately minimal; a small MLP, more of the
    state, and temporal context are all untried.
 3. **Confidence intervals and more shifts** — measured RIRs, the four conflicting distortions
    of the mixed-shift testbed, and DNSMOS SIG/BAK separately, since SIG is the metric this is
